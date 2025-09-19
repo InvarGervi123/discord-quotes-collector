@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ציטוטים מדיסקורד</title>
+  <style>
+    :root{--bg:#0f1220;--card:#151937;--muted:#8a93b2;--text:#e9ecff;--accent:#7aa2ff}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0e1020,#0a0c18);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--text)}
+    header{position:sticky;top:0;background:rgba(10,12,24,.8);backdrop-filter:saturate(160%) blur(8px);border-bottom:1px solid rgba(255,255,255,.06);z-index:10}
+    .wrap{max-width:1100px;margin:0 auto;padding:16px}
+    h1{font-size:20px;margin:0 0 6px 0}
+    .controls{display:grid;grid-template-columns:1fr;gap:8px}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    input[type="text"], textarea{width:100%;background:var(--card);color:var(--text);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;outline:none}
+    textarea{min-height:160px;resize:vertical}
+    button{background:var(--accent);color:#0b1025;border:0;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer}
+    button.secondary{background:transparent;color:var(--text);border:1px solid rgba(255,255,255,.12)}
+    button.ghost{background:transparent;color:var(--muted);border:0}
+    main{max-width:1100px;margin:16px auto;padding:0 16px 40px}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}
+    @media (min-width:900px){
+      .split{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+    }
+    .card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:14px;position:relative}
+    .meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12px;margin-bottom:8px}
+    .quote{white-space:pre-wrap;line-height:1.55}
+    .tools{display:flex;gap:6px;position:absolute;top:10px;inset-inline-end:10px}
+    .empty{color:var(--muted);text-align:center;padding:24px;border:1px dashed rgba(255,255,255,.14);border-radius:16px}
+    .count{color:var(--muted);font-size:12px}
+    .footer{margin-top:6px;color:var(--muted);font-size:12px}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0c1026;border:1px solid rgba(255,255,255,.1);padding:1px 6px;border-radius:6px}
+    label.file{position:relative;overflow:hidden}
+    label.file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>ציטוטים מדיסקורד</h1>
+      <div class="controls">
+        <div class="split">
+          <div>
+            <textarea id="input" placeholder=":) הדבק כאן טקסט שהעתקת מערוץ דיסקורד (אפשר הרבה הודעות יחד, כולל > ו->>>)."></textarea>
+            <div class="row" style="margin-top:6px">
+              <button id="parseBtn">הוסף/פרסר</button>
+              <button id="clearInput" class="secondary">נקה את השדה</button>
+              <span class="footer">טיפ: אפשר לגרור קובץ <span class="kbd">.txt</span> אל הדפדפן.</span>
+            </div>
+          </div>
+          <div>
+            <input id="search" type="text" placeholder="חיפוש בציטוטים..." />
+            <div class="row" style="margin-top:6px">
+              <button id="saveBtn">שמור בדפדפן</button>
+              <button id="loadBtn" class="secondary">טען</button>
+              <button id="exportBtn" class="secondary">ייצוא JSON</button>
+              <label class="file secondary" style="display:inline-flex;align-items:center;gap:6px;padding:10px 14px;border-radius:12px">
+                ייבוא JSON<input id="importFile" type="file" accept="application/json" />
+              </label>
+              <button id="clearAll" class="ghost" title="מחק הכול">מחק הכול</button>
+            </div>
+            <div class="count" id="count"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div id="list" class="grid"></div>
+  </main>
+
+<script>
+(() => {
+  const input = document.getElementById('input');
+  const list = document.getElementById('list');
+  const search = document.getElementById('search');
+  const count = document.getElementById('count');
+  const parseBtn = document.getElementById('parseBtn');
+  const clearInput = document.getElementById('clearInput');
+  const saveBtn = document.getElementById('saveBtn');
+  const loadBtn = document.getElementById('loadBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const importFile = document.getElementById('importFile');
+  const clearAll = document.getElementById('clearAll');
+
+  const KEY = 'discord_quotes_v1';
+  let quotes = [];
+
+  function uniq(arr){
+    const seen = new Set();
+    const out = [];
+    for (const s of arr){
+      const k = s.trim();
+      if (!k) continue;
+      const h = k.toLowerCase();
+      if (!seen.has(h)) { seen.add(h); out.push(k); }
+    }
+    return out;
+  }
+
+  function parseQuotes(text){
+    text = text.replaceAll('\r\n','\n');
+    const lines = text.split('\n');
+    const out = [];
+    let buf = [];
+
+    const flush = () => {
+      if (!buf.length) return;
+      const q = buf.join('\n').trim();
+      if (q) out.push(q);
+      buf = [];
+    };
+
+    let inTriple = false;
+
+    for (let i=0;i<lines.length;i++){
+      let line = lines[i];
+      const triple = line.trimStart().startsWith('>>>');
+      const single = line.trimStart().startsWith('>');
+
+      if (triple){
+        const content = line.replace(/^\s*>>> ?/, '');
+        if (!inTriple){ flush(); inTriple = true; }
+        buf.push(content);
+        continue;
+      }
+
+      if (inTriple){
+        if (single || line.trim()===''){
+          buf.push(line.replace(/^\s*> ?/, ''));
+          continue;
+        } else {
+          flush();
+          inTriple = false;
+        }
+      }
+
+      if (single){
+        const content = line.replace(/^\s*> ?/, '');
+        buf.push(content);
+        const next = lines[i+1];
+        const nextIsSingle = next!==undefined && next.trimStart().startsWith('>') && !next.trimStart().startsWith('>>>');
+        if (!nextIsSingle) flush();
+        continue;
+      }
+
+      if (line.trim()==='') { flush(); continue; }
+      buf.push(line);
+      const nxt = lines[i+1];
+      if (nxt===undefined || nxt.trim()===''){ flush(); }
+    }
+    flush();
+
+    return uniq(out);
+  }
+
+  function render(){
+    const q = search.value.trim().toLowerCase();
+    const filtered = q ? quotes.filter(t => t.toLowerCase().includes(q)) : quotes;
+    count.textContent = `${filtered.length} ציטוטים` + (q? ` (מסוננים מתוך ${quotes.length})` : ` (סה"כ)`);
+
+    if (!filtered.length){
+      list.innerHTML = `<div class="empty">אין ציטוטים עדיין. הדבק טקסט למעלה ולחץ \"הוסף/פרסר\".</div>`;
+      return;
+    }
+
+    list.innerHTML = '';
+    filtered.forEach((t, idx) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const tools = document.createElement('div');
+      tools.className = 'tools';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'secondary';
+      copyBtn.textContent = 'העתק';
+      copyBtn.onclick = async () => { await navigator.clipboard.writeText(t); copyBtn.textContent = 'הועתק!'; setTimeout(()=>copyBtn.textContent='העתק', 1000); };
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'ghost';
+      delBtn.textContent = 'מחק';
+      delBtn.onclick = () => { quotes.splice(quotes.indexOf(t),1); save(); render(); };
+
+      tools.append(copyBtn, delBtn);
+
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `#${idx+1}`;
+
+      const qEl = document.createElement('div');
+      qEl.className = 'quote';
+      qEl.textContent = t;
+
+      card.append(tools, meta, qEl);
+      list.appendChild(card);
+    });
+    save();
+  }
+
+  function save(){
+    localStorage.setItem(KEY, JSON.stringify(quotes));
+  }
+
+  parseBtn.onclick = () => {
+    const text = input.value;
+    if (!text.trim()) return;
+    const got = parseQuotes(text);
+    quotes = uniq([...got, ...quotes]);
+    input.value = '';
+    render();
+  };
+
+  clearInput.onclick = () => { input.value=''; };
+  search.oninput = () => render();
+
+  saveBtn.onclick = () => { save(); saveBtn.textContent='נשמר ✓'; setTimeout(()=>saveBtn.textContent='שמור בדפדפן', 900); };
+  loadBtn.onclick = () => { try { const data = JSON.parse(localStorage.getItem(KEY)||'[]'); if (Array.isArray(data)) quotes = uniq(data); } catch(e){} render(); };
+  exportBtn.onclick = () => {
+    const blob = new Blob([JSON.stringify(quotes, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'quotes.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  importFile.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text();
+    try{
+      const data = JSON.parse(text);
+      if (Array.isArray(data)) { quotes = uniq([...quotes, ...data]); render(); }
+    }catch(err){ alert('קובץ לא תקין'); }
+    importFile.value='';
+  };
+
+  clearAll.onclick = () => {
+    if (confirm('למחוק את כל הציטוטים?')){ quotes = []; render(); }
+  };
+
+  window.addEventListener('dragover', e=>{ e.preventDefault(); });
+  window.addEventListener('drop', e=>{
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    f.text().then(t=>{ input.value = (input.value? input.value + '\n\n' : '') + t; });
+  });
+
+  try { const data = JSON.parse(localStorage.getItem(KEY)||'[]'); if (Array.isArray(data)) quotes = uniq(data); } catch(e){}
+  render();
+})();
+</script>
+</body>
+</html>
