@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ציטוטים מדיסקורד</title>
+  <title>ציטוטים מדיסקורד – גרסה משותפת (Firebase)</title>
   <style>
     :root{--bg:#0f1220;--card:#151937;--muted:#8a93b2;--text:#e9ecff;--accent:#7aa2ff}
     *{box-sizing:border-box}
@@ -21,9 +21,7 @@
     button.ghost{background:transparent;color:var(--muted);border:0}
     main{max-width:1100px;margin:16px auto;padding:0 16px 40px}
     .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    @media (min-width:900px){
-      .split{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
-    }
+    @media (min-width:900px){.split{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}}
     .card{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:14px;position:relative}
     .meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:12px;margin-bottom:8px}
     .quote{white-space:pre-wrap;line-height:1.55}
@@ -34,16 +32,24 @@
     .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0c1026;border:1px solid rgba(255,255,255,.1);padding:1px 6px;border-radius:6px}
     label.file{position:relative;overflow:hidden}
     label.file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+    .auth{display:flex;align-items:center;gap:8px}
+    .badge{background:#0c1026;border:1px solid rgba(255,255,255,.12);padding:4px 8px;border-radius:999px;color:var(--muted);font-size:12px}
   </style>
 </head>
 <body>
   <header>
     <div class="wrap">
-      <h1>ציטוטים מדיסקורד</h1>
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h1>ציטוטים מדיסקורד</h1>
+        <div class="auth">
+          <span id="userBadge" class="badge">אורח</span>
+          <button id="authBtn" class="secondary">התחבר עם Google</button>
+        </div>
+      </div>
       <div class="controls">
         <div class="split">
           <div>
-            <textarea id="input" placeholder=":) הדבק כאן טקסט שהעתקת מערוץ דיסקורד (אפשר הרבה הודעות יחד, כולל > ו->>>)."></textarea>
+            <textarea id="input" placeholder=":) הדבק כאן טקסט שהעתקת מערוץ דיסקורד (תמיכה ב- > ו- >>>)"></textarea>
             <div class="row" style="margin-top:6px">
               <button id="parseBtn">הוסף/פרסר</button>
               <button id="clearInput" class="secondary">נקה את השדה</button>
@@ -53,8 +59,6 @@
           <div>
             <input id="search" type="text" placeholder="חיפוש בציטוטים..." />
             <div class="row" style="margin-top:6px">
-              <button id="saveBtn">שמור בדפדפן</button>
-              <button id="loadBtn" class="secondary">טען</button>
               <button id="exportBtn" class="secondary">ייצוא JSON</button>
               <label class="file secondary" style="display:inline-flex;align-items:center;gap:6px;padding:10px 14px;border-radius:12px">
                 ייבוא JSON<input id="importFile" type="file" accept="application/json" />
@@ -72,187 +76,273 @@
     <div id="list" class="grid"></div>
   </main>
 
-<script>
-(() => {
-  const input = document.getElementById('input');
-  const list = document.getElementById('list');
-  const search = document.getElementById('search');
-  const count = document.getElementById('count');
-  const parseBtn = document.getElementById('parseBtn');
-  const clearInput = document.getElementById('clearInput');
-  const saveBtn = document.getElementById('saveBtn');
-  const loadBtn = document.getElementById('loadBtn');
-  const exportBtn = document.getElementById('exportBtn');
-  const importFile = document.getElementById('importFile');
-  const clearAll = document.getElementById('clearAll');
+  <!-- אפליקציה -->
+  <script>
+  (() => {
+    const input = document.getElementById('input');
+    const list = document.getElementById('list');
+    const search = document.getElementById('search');
+    const count = document.getElementById('count');
+    const parseBtn = document.getElementById('parseBtn');
+    const clearInput = document.getElementById('clearInput');
+    const exportBtn = document.getElementById('exportBtn');
+    const importFile = document.getElementById('importFile');
+    const clearAll = document.getElementById('clearAll');
+    const authBtn = document.getElementById('authBtn');
+    const userBadge = document.getElementById('userBadge');
 
-  const KEY = 'discord_quotes_v1';
-  let quotes = [];
+    const KEY_LOCAL = 'discord_quotes_v2';
+    let quotes = [];
 
-  function uniq(arr){
-    const seen = new Set();
-    const out = [];
-    for (const s of arr){
-      const k = s.trim();
-      if (!k) continue;
-      const h = k.toLowerCase();
-      if (!seen.has(h)) { seen.add(h); out.push(k); }
+    function uniq(arr){
+      const seen = new Set();
+      const out = [];
+      for (const s of arr){
+        const k = (s||'').trim();
+        if (!k) continue;
+        const h = k.toLowerCase();
+        if (!seen.has(h)) { seen.add(h); out.push(k); }
+      }
+      return out;
     }
-    return out;
-  }
 
-  function parseQuotes(text){
-    text = text.replaceAll('\r\n','\n');
-    const lines = text.split('\n');
-    const out = [];
-    let buf = [];
+    function parseQuotes(text){
+      text = (text||'').replaceAll('\r\n','\n');
+      const lines = text.split('\n');
+      const out = [];
+      let buf = [];
+      let inTriple = false;
+      const flush = () => { if (!buf.length) return; const q = buf.join('\n').trim(); if (q) out.push(q); buf = []; };
 
-    const flush = () => {
-      if (!buf.length) return;
-      const q = buf.join('\n').trim();
-      if (q) out.push(q);
-      buf = [];
+      for (let i=0;i<lines.length;i++){
+        const line = lines[i];
+        const ls = line.trimStart();
+        const triple = ls.startsWith('>>>');
+        const single = ls.startsWith('>') && !triple;
+
+        if (triple){ flush(); inTriple = true; buf.push(line.replace(/^\s*>>> ?/, '')); continue; }
+        if (inTriple){
+          if (single || line.trim()===''){ buf.push(line.replace(/^\s*> ?/, '')); continue; }
+          flush(); inTriple = false;
+        }
+        if (single){
+          buf.push(line.replace(/^\s*> ?/, ''));
+          const next = lines[i+1];
+          const nextIsSingle = next!==undefined && next.trimStart().startsWith('>') && !next.trimStart().startsWith('>>>');
+          if (!nextIsSingle) flush();
+          continue;
+        }
+        if (line.trim()===''){ flush(); continue; }
+        buf.push(line);
+        const nxt = lines[i+1];
+        if (nxt===undefined || nxt.trim()===''){ flush(); }
+      }
+      flush();
+      return uniq(out);
+    }
+
+    function render(){
+      const q = search.value.trim().toLowerCase();
+      const filtered = q ? quotes.filter(t => t.toLowerCase().includes(q)) : quotes;
+      count.textContent = `${filtered.length} ציטוטים` + (q? ` (מסוננים מתוך ${quotes.length})` : ` (סה"כ)`);
+
+      if (!filtered.length){
+        list.innerHTML = `<div class="empty">אין ציטוטים עדיין. הדבק טקסט למעלה ולחץ "הוסף/פרסר".</div>`;
+        return;
+      }
+
+      list.innerHTML = '';
+      filtered.forEach((t, idx) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const tools = document.createElement('div');
+        tools.className = 'tools';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'secondary';
+        copyBtn.textContent = 'העתק';
+        copyBtn.onclick = async () => { await navigator.clipboard.writeText(t); copyBtn.textContent = 'הועתק!'; setTimeout(()=>copyBtn.textContent='העתק', 1000); };
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'ghost';
+        delBtn.textContent = 'מחק';
+        delBtn.onclick = () => { removeQuote(t); };
+
+        tools.append(copyBtn, delBtn);
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = `#${idx+1}`;
+
+        const qEl = document.createElement('div');
+        qEl.className = 'quote';
+        qEl.textContent = t;
+
+        card.append(tools, meta, qEl);
+        list.appendChild(card);
+      });
+    }
+
+    // ==== אחסון מקומי (fallback) ====
+    const persistLocal = () => { try { localStorage.setItem(KEY_LOCAL, JSON.stringify(quotes)); } catch(e){} };
+    const loadLocal = () => { try { const d = JSON.parse(localStorage.getItem(KEY_LOCAL)||'[]'); if (Array.isArray(d)) quotes = uniq(d); } catch(e){} };
+
+    // יצוא/יבוא
+    exportBtn.onclick = () => {
+      const blob = new Blob([JSON.stringify(quotes, null, 2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'quotes.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+    importFile.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const text = await file.text();
+      try{ const data = JSON.parse(text); if (Array.isArray(data)) addQuotes(data); }catch(err){ alert('קובץ לא תקין'); }
+      importFile.value='';
     };
 
-    let inTriple = false;
+    clearAll.onclick = () => { if (confirm('למחוק את כל הציטוטים?')) clearAllQuotes(); };
 
-    for (let i=0;i<lines.length;i++){
-      let line = lines[i];
-      const triple = line.trimStart().startsWith('>>>');
-      const single = line.trimStart().startsWith('>');
+    // גרירה של txt
+    window.addEventListener('dragover', e=>{ e.preventDefault(); });
+    window.addEventListener('drop', e=>{ e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (!f) return; f.text().then(t=>{ input.value = (input.value? input.value + '\n\n' : '') + t; }); });
 
-      if (triple){
-        const content = line.replace(/^\s*>>> ?/, '');
-        if (!inTriple){ flush(); inTriple = true; }
-        buf.push(content);
-        continue;
+    parseBtn.onclick = () => {
+      const text = input.value;
+      if (!text.trim()) return;
+      const got = parseQuotes(text);
+      addQuotes(got);
+      input.value = '';
+    };
+    clearInput.onclick = () => { input.value=''; };
+    search.oninput = () => render();
+
+    // ממשק הוספה/מחיקה יחיד – מגשר בין Local ל-Firebase
+    function addQuotes(arr){
+      const items = uniq(arr);
+      if (window.DB && window.DB.mode==='firebase' && window.DB.user){
+        items.forEach(t => window.DB.pushQuote(t));
+      } else {
+        quotes = uniq([...items, ...quotes]);
+        persistLocal();
+        render();
       }
-
-      if (inTriple){
-        if (single || line.trim()===''){
-          buf.push(line.replace(/^\s*> ?/, ''));
-          continue;
-        } else {
-          flush();
-          inTriple = false;
-        }
-      }
-
-      if (single){
-        const content = line.replace(/^\s*> ?/, '');
-        buf.push(content);
-        const next = lines[i+1];
-        const nextIsSingle = next!==undefined && next.trimStart().startsWith('>') && !next.trimStart().startsWith('>>>');
-        if (!nextIsSingle) flush();
-        continue;
-      }
-
-      if (line.trim()==='') { flush(); continue; }
-      buf.push(line);
-      const nxt = lines[i+1];
-      if (nxt===undefined || nxt.trim()===''){ flush(); }
     }
-    flush();
-
-    return uniq(out);
-  }
-
-  function render(){
-    const q = search.value.trim().toLowerCase();
-    const filtered = q ? quotes.filter(t => t.toLowerCase().includes(q)) : quotes;
-    count.textContent = `${filtered.length} ציטוטים` + (q? ` (מסוננים מתוך ${quotes.length})` : ` (סה"כ)`);
-
-    if (!filtered.length){
-      list.innerHTML = `<div class="empty">אין ציטוטים עדיין. הדבק טקסט למעלה ולחץ \"הוסף/פרסר\".</div>`;
-      return;
+    function removeQuote(t){
+      if (window.DB && window.DB.mode==='firebase' && window.DB.user){
+        window.DB.removeQuote(t);
+      } else {
+        const i = quotes.indexOf(t);
+        if (i>-1){ quotes.splice(i,1); persistLocal(); render(); }
+      }
+    }
+    function clearAllQuotes(){
+      if (window.DB && window.DB.mode==='firebase' && window.DB.user){
+        window.DB.clearAll();
+      } else { quotes = []; persistLocal(); render(); }
     }
 
-    list.innerHTML = '';
-    filtered.forEach((t, idx) => {
-      const card = document.createElement('div');
-      card.className = 'card';
+    // טעינה ראשונית לוקאלית
+    loadLocal();
 
-      const tools = document.createElement('div');
-      tools.className = 'tools';
-
-      const copyBtn = document.createElement('button');
-      copyBtn.className = 'secondary';
-      copyBtn.textContent = 'העתק';
-      copyBtn.onclick = async () => { await navigator.clipboard.writeText(t); copyBtn.textContent = 'הועתק!'; setTimeout(()=>copyBtn.textContent='העתק', 1000); };
-
-      const delBtn = document.createElement('button');
-      delBtn.className = 'ghost';
-      delBtn.textContent = 'מחק';
-      delBtn.onclick = () => { quotes.splice(quotes.indexOf(t),1); save(); render(); };
-
-      tools.append(copyBtn, delBtn);
-
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-      meta.textContent = `#${idx+1}`;
-
-      const qEl = document.createElement('div');
-      qEl.className = 'quote';
-      qEl.textContent = t;
-
-      card.append(tools, meta, qEl);
-      list.appendChild(card);
-    });
-    save();
-  }
-
-  function save(){
-    localStorage.setItem(KEY, JSON.stringify(quotes));
-  }
-
-  parseBtn.onclick = () => {
-    const text = input.value;
-    if (!text.trim()) return;
-    const got = parseQuotes(text);
-    quotes = uniq([...got, ...quotes]);
-    input.value = '';
+    // רינדור ראשון
     render();
-  };
 
-  clearInput.onclick = () => { input.value=''; };
-  search.oninput = () => render();
+    // חושף render כדי שמודול Firebase יוכל לקרוא לו
+    window.__renderQuotes = (arr) => { quotes = uniq(arr||[]); render(); };
+    window.__setUserBadge = (txt) => { userBadge.textContent = txt; };
 
-  saveBtn.onclick = () => { save(); saveBtn.textContent='נשמר ✓'; setTimeout(()=>saveBtn.textContent='שמור בדפדפן', 900); };
-  loadBtn.onclick = () => { try { const data = JSON.parse(localStorage.getItem(KEY)||'[]'); if (Array.isArray(data)) quotes = uniq(data); } catch(e){} render(); };
-  exportBtn.onclick = () => {
-    const blob = new Blob([JSON.stringify(quotes, null, 2)], {type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'quotes.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-  importFile.onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const text = await file.text();
-    try{
-      const data = JSON.parse(text);
-      if (Array.isArray(data)) { quotes = uniq([...quotes, ...data]); render(); }
-    }catch(err){ alert('קובץ לא תקין'); }
-    importFile.value='';
-  };
+  })();
+  </script>
 
-  clearAll.onclick = () => {
-    if (confirm('למחוק את כל הציטוטים?')){ quotes = []; render(); }
-  };
+  <!-- Firebase: הזן קונפיג למטה; אם לא תזין – האתר יעבוד במצב מקומי בלבד -->
+  <script type="module">
+    // ===== ערוך כאן: הדבק את ה-config שלך מה-Firebase Console =====
+    const firebaseConfig = {
+      // apiKey: "YOUR_API_KEY",
+      // authDomain: "YOUR_PROJECT.firebaseapp.com",
+      // databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+      // projectId: "YOUR_PROJECT_ID",
+      // storageBucket: "YOUR_PROJECT.appspot.com",
+      // messagingSenderId: "...",
+      // appId: "..."
+    };
 
-  window.addEventListener('dragover', e=>{ e.preventDefault(); });
-  window.addEventListener('drop', e=>{
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (!f) return;
-    f.text().then(t=>{ input.value = (input.value? input.value + '\n\n' : '') + t; });
-  });
+    // אם לא הוגדר config – מצב מקומי בלבד
+    const hasConfig = Object.keys(firebaseConfig||{}).length > 0;
 
-  try { const data = JSON.parse(localStorage.getItem(KEY)||'[]'); if (Array.isArray(data)) quotes = uniq(data); } catch(e){}
-  render();
-})();
-</script>
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getDatabase, ref, push, onValue, remove, set, get, child } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    const authBtn = document.getElementById('authBtn');
+
+    if (!hasConfig){
+      // מצב מקומי – מסתיר כפתור התחברות
+      authBtn.style.display = 'none';
+      window.DB = { mode:'local' };
+      window.__setUserBadge('אורח (מצב מקומי)');
+      // אין עוד מה לעשות
+    } else {
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getDatabase(app);
+
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+
+      authBtn.onclick = async () => {
+        if (auth.currentUser) await signOut(auth);
+        else await signInWithPopup(auth, provider);
+      };
+
+      window.DB = {
+        mode:'firebase',
+        user:null,
+        quotesRef: null,
+        unsubscribe: null,
+        _sync(){
+          if (this.unsubscribe){ this.unsubscribe(); this.unsubscribe = null; }
+          const path = this.user ? `users/${this.user.uid}/quotes` : null; // כל משתמש שומר מקום שלו
+          if (!path) { window.__renderQuotes([]); return; }
+          this.quotesRef = ref(db, path);
+          this.unsubscribe = onValue(this.quotesRef, (snap) => {
+            const val = snap.val()||{};
+            const arr = Object.values(val).map(x=>x.text).filter(Boolean);
+            window.__renderQuotes(arr);
+          });
+        },
+        async pushQuote(text){
+          if (!this.user) return alert('צריך להתחבר כדי לשמור אונליין');
+          const path = `users/${this.user.uid}/quotes`;
+          await push(ref(db, path), { text });
+        },
+        async removeQuote(text){
+          if (!this.user) return;
+          const path = `users/${this.user.uid}/quotes`;
+          const snap = await get(child(ref(db), path));
+          const val = snap.val()||{};
+          const entry = Object.entries(val).find(([,v]) => v && v.text === text);
+          if (entry){ await remove(ref(db, `${path}/${entry[0]}`)); }
+        },
+        async clearAll(){
+          if (!this.user) return;
+          const path = `users/${this.user.uid}/quotes`;
+          await set(ref(db, path), null);
+        }
+      };
+
+      onAuthStateChanged(auth, (u) => {
+        window.DB.user = u || null;
+        document.getElementById('authBtn').textContent = u ? `התנתק (${u.displayName||u.email})` : 'התחבר עם Google';
+        window.__setUserBadge(u ? (u.displayName||u.email||'משתמש מחובר') : 'אורח');
+        window.DB._sync();
+      });
+    }
+  </script>
 </body>
 </html>
